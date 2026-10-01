@@ -1,0 +1,185 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><title>LoRa Solar Mesh Node – Interactive 3D</title>
+<style>
+:root{--fg:#10283c;--pn:rgba(255,255,255,.88);--ac:#0b7cd6;--mu:#4d657b;--bd:rgba(16,40,60,.15);box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media(prefers-color-scheme:dark){:root:not([data-theme="light"]){--fg:#e3eef8;--pn:rgba(16,28,40,.88);--mu:#9bb1c5;--bd:rgba(255,255,255,.16)}}
+:root[data-theme="dark"]{--fg:#e3eef8;--pn:rgba(16,28,40,.88);--mu:#9bb1c5;--bd:rgba(255,255,255,.16)}
+html,body{margin:0;height:100%;overflow:hidden;background:#9fd0f2;color:var(--fg);font:13px system-ui,-apple-system,"Segoe UI",sans-serif}
+canvas{position:fixed;inset:0;touch-action:none;display:block}
+.p{position:fixed;background:var(--pn);border:1px solid var(--bd);border-radius:12px;padding:8px 10px;backdrop-filter:blur(8px)}
+#hud{left:8px;top:calc(env(safe-area-inset-top,0px) + 8px);max-width:min(330px,calc(100vw - 16px))}
+h1{font-size:14px;margin:0 0 6px}
+#st{display:grid;grid-template-columns:repeat(3,1fr);gap:4px 10px}
+#st div{font-size:11px;color:var(--mu)}#st b{display:block;font-size:14px;color:var(--fg)}
+#wf{display:flex;flex-wrap:wrap;gap:4px;margin-top:7px}
+#wf span{font-size:10px;padding:2px 7px;border-radius:99px;border:1px solid var(--bd);color:var(--mu)}
+#wf span.on{background:var(--ac);color:#fff;border-color:var(--ac)}
+#al{margin-top:6px;font-size:11px;color:var(--mu)}
+#in{right:8px;top:calc(env(safe-area-inset-top,0px) + 8px);width:min(240px,calc(100vw - 16px));font-size:12px}
+#in b{font-size:13px}#in p{margin:4px 0 0;color:var(--mu)}
+#ctl{left:8px;right:8px;bottom:calc(env(safe-area-inset-bottom,0px) + 8px);display:flex;flex-wrap:wrap;gap:6px 14px;align-items:center;justify-content:center}
+#ctl label{display:flex;align-items:center;gap:5px;white-space:nowrap}
+#ctl input[type=range]{width:96px}
+button{font:inherit;background:var(--ac);color:#fff;border:0;border-radius:8px;padding:5px 10px;cursor:pointer}
+</style></head><body>
+<div id="hud" class="p"><h1>LoRa Solar Mesh Node · live simulation</h1>
+<div id="st"><div>Soil moisture<b id="sM">–</b></div><div>Battery<b id="sB">–</b></div><div>Solar input<b id="sS">–</b></div><div>Valve<b id="sV">–</b></div><div>Time<b id="sT">–</b></div><div>LoRa link<b id="sL">–</b></div></div>
+<div id="wf"></div><div id="al">System ready.</div></div>
+<div id="in" class="p"><b>Tap any part</b><p>Drag to orbit, scroll or pinch to zoom. Try Explode, X-ray, and Open lid.</p></div>
+<div id="ctl" class="p">
+<label>Explode <input id="ex" type="range" min="0" max="1" step=".01" value="0"></label>
+<label>Time of day <input id="sn" type="range" min="0" max="100" value="45"></label>
+<label>Soil moisture <input id="ms" type="range" min="0" max="100" value="38"></label>
+<label><input id="xr" type="checkbox">X-ray</label><label><input id="ld" type="checkbox">Open lid</label>
+<label><input id="au" type="checkbox" checked>Auto</label><label><input id="vl" type="checkbox">Valve open</label>
+<label><input id="dy" type="checkbox">Run day</label><label><input id="rt" type="checkbox" checked>Spin</label><button id="rv">Reset view</button></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+const $=i=>document.getElementById(i),V3=(...a)=>new THREE.Vector3(...a),cl=(v,a,b)=>Math.max(a,Math.min(b,v)),lp=(a,b,t)=>a+(b-a)*t;
+const S=new THREE.Scene(),R=new THREE.WebGLRenderer({antialias:true,alpha:true}),C=new THREE.PerspectiveCamera(42,1,1,3000);
+R.setPixelRatio(Math.min(devicePixelRatio,2));R.shadowMap.enabled=true;document.body.prepend(R.domElement);
+const hemi=new THREE.HemisphereLight(0xbcd8ff,0x6b5a45,.7),dl=new THREE.DirectionalLight(0xffffff,1);S.add(hemi,dl);
+dl.castShadow=true;dl.shadow.mapSize.set(1024,1024);Object.assign(dl.shadow.camera,{left:-220,right:220,top:220,bottom:-220,far:900});
+const world=new THREE.Group();S.add(world),parts=[];
+const M=(c,r,m,o)=>new THREE.MeshStandardMaterial(Object.assign({color:c,roughness:r??.5,metalness:m??.1},o));
+const B=(w,h,d,c,r,m)=>new THREE.Mesh(new THREE.BoxGeometry(w,h,d),M(c,r,m));
+const Cy=(a,b,h,c,r,m,s=24)=>new THREE.Mesh(new THREE.CylinderGeometry(a,b,h,s),M(c,r,m));
+const Tr=(R_,t,c)=>new THREE.Mesh(new THREE.TorusGeometry(R_,t,10,32),M(c,.35,.7));
+function P(o,name,info,pos,dir){const rec={o,b:V3(...pos),d:V3(...(dir||[0,0,0])),name,info};o.position.set(...pos);world.add(o);
+ o.traverse(m=>{if(m.isMesh){m.castShadow=m.receiveShadow=true;m.userData.p=rec}});parts.push(rec);return o}
+function G(...k){const g=new THREE.Group();k.forEach(([m,x,y,z])=>{m.position.set(x,y,z);g.add(m)});return g}
+
+// ground, pipe (existing infrastructure)
+const gm=M(0x9a7b4f,.95,0);const ground=new THREE.Mesh(new THREE.BoxGeometry(330,60,200),gm);
+P(ground,'Field soil','Soil around the pipeline. Its colour darkens as moisture rises, which the capacitive probe reads.',[0,-70,0]);
+P(B(330,1,90,0x5a8f3c,1,0),'Crop field','Existing cropland on the far side of the pipeline.',[0,-39.6,-55]);
+const pm=M(0xaab4bd,.3,.8,{transparent:true,opacity:.5});const pipe=new THREE.Mesh(new THREE.CylinderGeometry(7,7,230,28),pm);pipe.rotation.z=Math.PI/2;
+P(pipe,'Existing pipeline','Pre-existing irrigation pipe. The node clamps onto it without cutting or replacing anything.',[0,0,0]);
+P(G([Cy(3,3,40,0x666d73),-85,-20,0],[Cy(3,3,40,0x666d73),85,-20,0]),'Pipe supports','Existing pipe stands.',[0,0,0]);
+
+// existing gate valve + wheel
+const wheel=G([Tr(13,1.8,0x2f343a),0,0,0],[B(26,2,2,0x2f343a),0,0,0],[B(2,2,26,0x2f343a),0,0,0]);wheel.children[0].rotation.x=Math.PI/2;
+const valve=G([Cy(10,10,22,0xa9743a,.4,.6),0,0,0],[Cy(6,7,14,0xa9743a,.4,.6),0,16,0],[Cy(1.6,1.6,22,0xbfc5cc,.3,.8),0,30,0],[wheel,0,40,0]);
+P(valve,'Existing gate valve','The farmer\'s original valve and handwheel, left untouched. The gear motor turns this wheel.',[50,0,0]);
+
+// gear motor + shaft
+const shaft=Cy(3,3,14,0xbfc5cc,.3,.8,16);
+P(G([B(28,20,24,0x2b3138,.5,.3),0,0,0],[Cy(7,7,6,0x444b53,.4,.6),0,-13,0],[shaft,0,-19,0]),'Gear motor','12 V DC gear motor. High torque, low speed, so it can turn a stiff valve wheel.',[50,58,0],[0,1.4,0]);
+const clamp=G([Tr(8.5,1.6,0x9aa3ab),0,0,0],[B(3,44,3,0x9aa3ab,.3,.7),12,22,0],[B(14,3,3,0x9aa3ab,.3,.7),6,0,0]);clamp.children[0].rotation.x=Math.PI/2;
+P(clamp,'Universal clamp','Adjustable bracket that holds the motor on the valve bonnet. This is what makes it a retrofit.',[50,16,0],[1.3,-.3,1.1]);
+
+// enclosure (IP67) walls, lid, glands
+const em=M(0xeeeae2,.7,0);
+const enc=G([B(44,56,3,0,0),0,0,-12.5],[B(44,3,28),0,26.5,0],[B(44,3,28),0,-26.5,0],[B(3,56,28),-20.5,0,0],[B(3,56,28),20.5,0,0],[Cy(3,3,5,0x111111),-8,-29,0],[Cy(3,3,5,0x111111),6,-29,0]);
+enc.children.slice(0,5).forEach(m=>m.material=em);
+P(enc,'IP67 enclosure','Sealed, dust-tight and water-proof housing protecting the electronics from rain and splashes.',[-20,42,0],[0,.3,-1.2]);
+const lidM=B(44,56,3,0,0);lidM.material=em;
+const led=new THREE.Mesh(new THREE.SphereGeometry(2,12,12),new THREE.MeshBasicMaterial({color:0x2ecc71}));
+const lidG=G([lidM,22,0,1.5],[led,10,14,3.5],[Cy(3,3,2,0xcc3b2e,.4,0,16),26,14,3.5]);lidG.children[2].rotation.x=Math.PI/2;
+[[-1,-1],[1,-1],[-1,1],[1,1]].forEach(([a,b])=>{const s=Cy(1.8,1.8,1,0x888f96,.3,.8,12);s.rotation.x=Math.PI/2;s.position.set(22+a*19,b*24,3.3);lidG.add(s)});
+P(lidG,'Lid + status LED + button','Gasketed lid with a status LED (green = healthy) and a manual button. Use "Open lid" to see inside.',[-42,42,14],[-1.3,0,1.3]);
+
+// internals
+P(B(34,44,2,0x1f6b3a,.5),'Main PCB','Carrier board with the power rails and TVS diode surge protection.',[-20,42,-8],[0,0,.4]);
+const mcu=G([B(14,2,18,0xc9ced3,.3,.7),-8,14,0],[B(12,2,12,0x16a085,.4,.2),10,10,0]);
+P(mcu,'ESP32 + LoRa module','ESP32 runs the deep-sleep firmware and the valve logic. The LoRa radio talks to the mesh in the 865–867 MHz band.',[-20,42,-6],[0,.4,1]);
+P(B(26,12,12,0x2f6fd0,.4,.1),'LiFePO4 battery','Safe, long-life lithium iron phosphate cell that stores solar energy for night and cloudy days.',[-25,29,-.5],[-.6,-.2,1.5]);
+P(B(12,2,12,0x244a8a,.5),'Solar charge controller','MPPT-style charge controller that protects the battery from over-charge and deep discharge.',[-8,41,-5.5],[.8,.2,1.8]);
+
+// solar panel
+const cv=document.createElement('canvas');cv.width=cv.height=256;const cx=cv.getContext('2d');cx.fillStyle='#173a73';cx.fillRect(0,0,256,256);cx.strokeStyle='#8fb2e6';cx.lineWidth=2;
+for(let i=0;i<=8;i++){cx.beginPath();cx.moveTo(i*32,0);cx.lineTo(i*32,256);cx.moveTo(0,i*32);cx.lineTo(256,i*32);cx.stroke()}
+const cells=new THREE.Mesh(new THREE.PlaneGeometry(48,32),new THREE.MeshStandardMaterial({map:new THREE.CanvasTexture(cv),roughness:.25,metalness:.3}));cells.rotation.x=-Math.PI/2;
+const sol=G([B(52,3,36,0x1a1a1f,.5,.4),0,0,0],[cells,0,1.7,0]);const solar=P(sol,'Solar panel','About 10 W panel, tilted to face the sun. Powers everything off-grid, with no wiring to the mains.',[-20,80,0],[0,1.6,0]);sol.rotation.x=-.3;
+
+// antenna
+const ant=G([Cy(3,3,8,0x111111,.4),0,0,0],[Cy(1.6,1.6,34,0x111111,.4),0,21,0]);ant.children[1].rotation.z=-.1;
+P(ant,'LoRa mesh antenna','Long-range sub-GHz antenna. Hops the data from node to node over kilometres, with no SIM or Wi-Fi.',[5,54,0],[1.2,1.2,0]);
+
+// soil probe
+P(G([Cy(3,3,36,0x33342c,.6),0,12,0],[new THREE.Mesh(new THREE.ConeGeometry(3,16,12),M(0xc9a13b,.4,.4)),0,-14,0],[B(8,10,6,0x111111),0,30,0]),
+ 'Capacitive soil probe','Corrosion-free capacitive probe that measures soil moisture. It needs no contact with the water, so it lasts.',[-70,-40,42],[0,-.2,1.2]);
+
+// cables
+const cb=new THREE.Group(),cm=M(0x16181b,.7,0);
+[[[-70,-5,42],[-66,-22,36],[-50,-22,20],[-34,-6,6],[-28,10,0]],[[2,28,4],[16,22,10],[34,30,14],[44,48,10],[50,54,12]]].forEach(a=>cb.add(new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(a.map(p=>V3(...p))),24,1,6),cm)));
+world.add(cb);
+
+// gateway
+P(G([Cy(2,2.5,70,0x666d73),0,35,0],[Cy(1.2,1.2,22,0x111111),0,80,0],[B(12,9,7,0xdfe3e6),0,20,4]),'LoRa gateway (remote)','Receives node data from kilometres away and forwards it to the cloud and the farmer\'s phone app.',[140,-40,-60]);
+
+// water flow
+const N=70,wp=new Float32Array(N*3),wu=Array.from({length:N},(_,i)=>i/N),wg=new THREE.BufferGeometry();wg.setAttribute('position',new THREE.BufferAttribute(wp,3));
+const water=new THREE.Points(wg,new THREE.PointsMaterial({color:0x39a9ff,size:4.5,transparent:true,opacity:.9}));water.frustumCulled=false;S.add(water);
+
+// LoRa rings + link to gateway
+const rings=[0,1,2].map(()=>{const r=new THREE.Mesh(new THREE.RingGeometry(.9,1,48),new THREE.MeshBasicMaterial({color:0x19b5ff,transparent:true,side:2,depthWrite:false}));S.add(r);return r});
+const gw=V3(140,32,-60),ln=new THREE.Line(new THREE.BufferGeometry(),new THREE.LineDashedMaterial({color:0x19b5ff,dashSize:4,gapSize:4,transparent:true,opacity:.6}));S.add(ln);
+const pk=new THREE.Mesh(new THREE.SphereGeometry(2.6,12,12),new THREE.MeshBasicMaterial({color:0xffd23f}));S.add(pk);
+
+// UI state
+const WF=['Soil sensing','LoRa transmit','Edge decision','Valve actuation','Irrigation','App alert'];
+$('wf').innerHTML=WF.map(w=>`<span>${w}</span>`).join('');const chips=[...$('wf').children];
+const st={E:0,lid:0,v:0,moist:38,batt:78,T:0},K=90;let autoOpen=false,prevWant=false,hov=null,sel=null,xrOn=false,skyK=-1;
+function setEm(r,h){r.o.traverse(m=>{if(m.isMesh&&m.material.emissive)m.material.emissive.setHex(h)})}
+function paint(){parts.forEach(p=>setEm(p,p===sel?0x0d5aa8:p===hov?0x123a5e:0))}
+function alertMsg(t){$('al').textContent=t}
+$('ms').oninput=e=>st.moist=+e.target.value;
+
+// orbit camera
+let th=.7,ph=1.15,rad=380,drag=false,moved=0,ptrs=new Map(),pd=0;const tgt=V3(25,20,0);
+const cvs=R.domElement,ray=new THREE.Raycaster(),mv=new THREE.Vector2();
+function pick(e){mv.set(e.clientX/innerWidth*2-1,-(e.clientY/innerHeight)*2+1);ray.setFromCamera(mv,C);const h=ray.intersectObjects(world.children,true).find(i=>i.object.userData.p&&i.object.visible);return h?h.object.userData.p:null}
+cvs.addEventListener('pointerdown',e=>{cvs.setPointerCapture(e.pointerId);ptrs.set(e.pointerId,[e.clientX,e.clientY]);drag=true;moved=0;if(ptrs.size==2){const[a,b]=[...ptrs.values()];pd=Math.hypot(a[0]-b[0],a[1]-b[1])}});
+cvs.addEventListener('pointermove',e=>{
+ if(!ptrs.has(e.pointerId)){const p=pick(e);if(p!==hov){hov=p;paint();cvs.style.cursor=p?'pointer':'grab'}return}
+ const o=ptrs.get(e.pointerId);ptrs.set(e.pointerId,[e.clientX,e.clientY]);
+ if(ptrs.size==2){const[a,b]=[...ptrs.values()],d=Math.hypot(a[0]-b[0],a[1]-b[1]);rad=cl(rad*pd/d,140,800);pd=d;moved=9;return}
+ const dx=e.clientX-o[0],dy=e.clientY-o[1];moved+=Math.abs(dx)+Math.abs(dy);th-=dx*.008;ph=cl(ph-dy*.006,.2,1.5)});
+cvs.addEventListener('pointerup',e=>{ptrs.delete(e.pointerId);if(!ptrs.size){drag=false;if(moved<6){sel=pick(e);paint();
+ $('in').innerHTML=sel?`<b>${sel.name}</b><p>${sel.info}</p>`:'<b>Tap any part</b><p>Drag to orbit, scroll or pinch to zoom.</p>'}}});
+cvs.addEventListener('pointercancel',e=>{ptrs.delete(e.pointerId);drag=false});
+cvs.addEventListener('wheel',e=>{e.preventDefault();rad=cl(rad*(1+e.deltaY*.001),140,800)},{passive:false});
+$('rv').onclick=()=>{th=.7;ph=1.15;rad=380;$('ex').value=0;$('ld').checked=false;$('xr').checked=false};
+
+function sky(k){const c=(d,n)=>`rgb(${[0,1,2].map(i=>Math.round(lp(n[i],d[i],k))).join()})`;document.body.style.background=`linear-gradient(${c([120,185,235],[8,16,34])},${c([226,240,250],[28,40,64])})`}
+function fr(now){
+ const dt=Math.min(.05,(now-(fr.l||now))/1e3);fr.l=now;st.T+=dt;const T=st.T;
+ // explode + lid + xray
+ st.E+=(+$('ex').value-st.E)*Math.min(1,dt*6);st.lid+=(($('ld').checked?1:0)-st.lid)*Math.min(1,dt*6);
+ parts.forEach(p=>p.o.position.copy(p.b).addScaledVector(p.d,st.E*K));lidG.rotation.y=-st.lid*2;cb.visible=st.E<.04;
+ const xo=$('xr').checked;if(xo!==xrOn){xrOn=xo;em.transparent=xo;em.opacity=xo?.2:1;em.depthWrite=!xo;em.needsUpdate=true}
+ // sun
+ if($('dy').checked)$('sn').value=($('sn').value*1+dt*3)%100;
+ const hr=5+$('sn').value*.14,a=(hr-6)/12*Math.PI,sH=Math.sin(a);
+ dl.position.set(-Math.cos(a)*300,Math.max(60,sH*300),180);dl.intensity=.12+.95*Math.max(0,sH);hemi.intensity=.3+.5*Math.max(0,sH);
+ const k=cl(sH*1.6+.25,0,1);if(Math.abs(k-skyK)>.01){skyK=k;sky(k)}
+ // simulation
+ const sW=10*Math.max(0,sH);let want;
+ if($('au').checked){if(st.moist<30)autoOpen=true;else if(st.moist>65)autoOpen=false;want=autoOpen}else want=$('vl').checked;
+ if(st.batt<6)want=false;
+ if(want!==prevWant){alertMsg(want?($('au').checked?'Moisture below 30% → opening valve':'Manual command → opening valve'):(st.batt<6?'Low battery → valve closed for safety':$('au').checked?'Moisture reached 65% → closing valve':'Manual command → closing valve'));prevWant=want}
+ $('vl').checked=want;$('vl').disabled=$('au').checked;
+ const tv=want?1:0,mvg=Math.abs(tv-st.v)>.002;st.v+=cl(tv-st.v,-dt*.5,dt*.5);
+ wheel.rotation.y=st.v*Math.PI*3;shaft.rotation.y=wheel.rotation.y;
+ st.batt=cl(st.batt+(sW-(.4+(mvg?5:0)))*dt*.35,0,100);
+ if(!(document.activeElement===$('ms')))st.moist=cl(st.moist+(st.v*5-.35)*dt,0,100),$('ms').value=st.moist;
+ gm.color.setRGB(lp(.6,.25,st.moist/100),lp(.48,.17,st.moist/100),lp(.31,.11,st.moist/100));
+ // water
+ water.visible=st.v>.03;const sp=st.v*.5*dt;
+ for(let i=0;i<N;i++){wu[i]=(wu[i]+sp)%1;wp[i*3]=-108+wu[i]*216;wp[i*3+1]=Math.sin(i*7.3)*3.6;wp[i*3+2]=Math.cos(i*5.1)*3.6}wg.attributes.position.needsUpdate=true;
+ // LoRa
+ const tip=ant.position.clone().add(V3(1,36,0));rings.forEach((r,i)=>{const p=(T*.45+i/3)%1;r.position.copy(tip);r.scale.setScalar(2+p*55);r.material.opacity=(1-p)*.55;r.lookAt(C.position);r.visible=st.E<.3});
+ ln.geometry.setFromPoints([tip,gw]);ln.computeLineDistances();ln.visible=pk.visible=st.E<.3;pk.position.lerpVectors(tip,gw,(T*.45)%1);
+ led.material.color.setRGB(0,.35+.65*(Math.sin(T*4)>0?1:.3),.2);
+ // HUD
+ $('sM').textContent=st.moist.toFixed(0)+'%';$('sB').textContent=st.batt.toFixed(0)+'%';$('sS').textContent=sW.toFixed(1)+' W';
+ $('sV').textContent=mvg?'Moving':st.v>.5?'Open':'Closed';$('sT').textContent=String(Math.floor(hr)).padStart(2,'0')+':'+String(Math.floor(hr%1*60)).padStart(2,'0');
+ $('sL').textContent=Math.round(-92+4*Math.sin(T))+' dBm';
+ const wi=Math.floor(T/1.1)%6;chips.forEach((c,i)=>c.classList.toggle('on',i===wi));
+ // camera
+ if($('rt').checked&&!drag)th+=dt*.1;
+ const d=rad*(innerWidth/innerHeight<1?1.6:1);C.position.set(tgt.x+d*Math.sin(ph)*Math.sin(th),tgt.y+d*Math.cos(ph),tgt.z+d*Math.sin(ph)*Math.cos(th));C.lookAt(tgt);
+ R.render(S,C);requestAnimationFrame(fr)}
+function rs(){R.setSize(innerWidth,innerHeight);C.aspect=innerWidth/innerHeight;C.updateProjectionMatrix()}
+addEventListener('resize',rs);rs();requestAnimationFrame(fr);
+</script></body></html>
